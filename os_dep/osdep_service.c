@@ -13,6 +13,7 @@
  *
  *****************************************************************************/
 
+
 #define _OSDEP_SERVICE_C_
 
 #include <drv_types.h>
@@ -26,9 +27,6 @@ atomic_t _malloc_size = ATOMIC_INIT(0);
 #endif
 #endif /* DBG_MEMORY_LEAK */
 
-#if defined(MODULE_IMPORT_NS)
-MODULE_IMPORT_NS(VFS_internal_I_am_really_a_filesystem_and_am_NOT_a_driver);
-#endif
 
 #if defined(PLATFORM_LINUX)
 /*
@@ -85,6 +83,10 @@ inline void *_rtw_vmalloc(u32 sz)
 	pbuf = malloc(sz, M_DEVBUF, M_NOWAIT);
 #endif
 
+#ifdef PLATFORM_WINDOWS
+	NdisAllocateMemoryWithTag(&pbuf, sz, RT_TAG);
+#endif
+
 #ifdef DBG_MEMORY_LEAK
 #ifdef PLATFORM_LINUX
 	if (pbuf != NULL) {
@@ -108,6 +110,11 @@ inline void *_rtw_zvmalloc(u32 sz)
 #ifdef PLATFORM_FREEBSD
 	pbuf = malloc(sz, M_DEVBUF, M_ZERO | M_NOWAIT);
 #endif
+#ifdef PLATFORM_WINDOWS
+	NdisAllocateMemoryWithTag(&pbuf, sz, RT_TAG);
+	if (pbuf != NULL)
+		NdisFillMemory(pbuf, sz, 0);
+#endif
 
 	return pbuf;
 }
@@ -119,6 +126,9 @@ inline void _rtw_vmfree(void *pbuf, u32 sz)
 #endif
 #ifdef PLATFORM_FREEBSD
 	free(pbuf, M_DEVBUF);
+#endif
+#ifdef PLATFORM_WINDOWS
+	NdisFreeMemory(pbuf, sz, 0);
 #endif
 
 #ifdef DBG_MEMORY_LEAK
@@ -144,6 +154,11 @@ void *_rtw_malloc(u32 sz)
 #endif
 #ifdef PLATFORM_FREEBSD
 	pbuf = malloc(sz, M_DEVBUF, M_NOWAIT);
+#endif
+#ifdef PLATFORM_WINDOWS
+
+	NdisAllocateMemoryWithTag(&pbuf, sz, RT_TAG);
+
 #endif
 
 #ifdef DBG_MEMORY_LEAK
@@ -173,6 +188,10 @@ void *_rtw_zmalloc(u32 sz)
 		memset(pbuf, 0, sz);
 #endif
 
+#ifdef PLATFORM_WINDOWS
+		NdisFillMemory(pbuf, sz, 0);
+#endif
+
 	}
 
 	return pbuf;
@@ -193,6 +212,11 @@ void _rtw_mfree(void *pbuf, u32 sz)
 #endif
 #ifdef PLATFORM_FREEBSD
 	free(pbuf, M_DEVBUF);
+#endif
+#ifdef PLATFORM_WINDOWS
+
+	NdisFreeMemory(pbuf, sz, 0);
+
 #endif
 
 #ifdef DBG_MEMORY_LEAK
@@ -419,9 +443,6 @@ void rtw_mstat_dump(void *sel)
 #ifdef RTW_MEM_FUNC_STAT
 	int value_f[4][mstat_ff_idx(MSTAT_FUNC_MAX)];
 #endif
-
-	int vir_alloc, vir_peak, vir_alloc_err, phy_alloc, phy_peak, phy_alloc_err;
-	int tx_alloc, tx_peak, tx_alloc_err, rx_alloc, rx_peak, rx_alloc_err;
 
 	for (i = 0; i < mstat_tf_idx(MSTAT_TYPE_MAX); i++) {
 		value_t[0][i] = ATOMIC_READ(&(rtw_mem_type_stat[i].alloc));
@@ -907,6 +928,12 @@ void _rtw_memcpy(void *dst, const void *src, u32 sz)
 
 #endif
 
+#ifdef PLATFORM_WINDOWS
+
+	NdisMoveMemory(dst, src, sz);
+
+#endif
+
 }
 
 inline void _rtw_memmove(void *dst, const void *src, u32 sz)
@@ -930,6 +957,37 @@ int	_rtw_memcmp(const void *dst, const void *src, u32 sz)
 		return _FALSE;
 #endif
 
+
+#ifdef PLATFORM_WINDOWS
+	/* under Windows, the return value of NdisEqualMemory for two same mem. chunk is 1 */
+
+	if (NdisEqualMemory(dst, src, sz))
+		return _TRUE;
+	else
+		return _FALSE;
+
+#endif
+
+
+
+}
+
+int _rtw_memcmp2(const void *dst, const void *src, u32 sz)
+{
+	const unsigned char *p1 = dst, *p2 = src;
+
+	if (sz == 0)
+		return 0;
+
+	while (*p1 == *p2) {
+		p1++;
+		p2++;
+		sz--;
+		if (sz == 0)
+			return 0;
+	}
+
+	return *p1 - *p2;
 }
 
 void _rtw_memset(void *pbuf, int c, u32 sz)
@@ -939,6 +997,16 @@ void _rtw_memset(void *pbuf, int c, u32 sz)
 
 	memset(pbuf, c, sz);
 
+#endif
+
+#ifdef PLATFORM_WINDOWS
+#if 0
+	NdisZeroMemory(pbuf, sz);
+	if (c != 0)
+		memset(pbuf, c, sz);
+#else
+	NdisFillMemory(pbuf, sz, c);
+#endif
 #endif
 
 }
@@ -966,6 +1034,11 @@ void _rtw_init_listhead(_list *list)
 #ifdef PLATFORM_FREEBSD
 	list->next = list;
 	list->prev = list;
+#endif
+#ifdef PLATFORM_WINDOWS
+
+	NdisInitializeListHead(list);
+
 #endif
 
 }
@@ -996,6 +1069,17 @@ u32	rtw_is_list_empty(_list *phead)
 
 #endif
 
+
+#ifdef PLATFORM_WINDOWS
+
+	if (IsListEmpty(phead))
+		return _TRUE;
+	else
+		return _FALSE;
+
+#endif
+
+
 }
 
 void rtw_list_insert_head(_list *plist, _list *phead)
@@ -1009,6 +1093,9 @@ void rtw_list_insert_head(_list *plist, _list *phead)
 	__list_add(plist, phead, phead->next);
 #endif
 
+#ifdef PLATFORM_WINDOWS
+	InsertHeadList(phead, plist);
+#endif
 }
 
 void rtw_list_insert_tail(_list *plist, _list *phead)
@@ -1022,6 +1109,11 @@ void rtw_list_insert_tail(_list *plist, _list *phead)
 #ifdef PLATFORM_FREEBSD
 
 	__list_add(plist, phead->prev, phead);
+
+#endif
+#ifdef PLATFORM_WINDOWS
+
+	InsertTailList(phead, plist);
 
 #endif
 
@@ -1114,6 +1206,9 @@ void rtw_init_timer(_timer *ptimer, void *padapter, void *pfunc, void *ctx)
 #ifdef PLATFORM_FREEBSD
 	_init_timer(ptimer, adapter->pifp, pfunc, ctx);
 #endif
+#ifdef PLATFORM_WINDOWS
+	_init_timer(ptimer, adapter->hndis_adapter, pfunc, ctx);
+#endif
 }
 
 /*
@@ -1133,6 +1228,11 @@ void _rtw_init_sema(_sema	*sema, int init_val)
 #endif
 #ifdef PLATFORM_FREEBSD
 	sema_init(sema, init_val, "rtw_drv");
+#endif
+#ifdef PLATFORM_OS_XP
+
+	KeInitializeSemaphore(sema, init_val,  SEMA_UPBND); /* count=0; */
+
 #endif
 
 #ifdef PLATFORM_OS_CE
@@ -1164,6 +1264,11 @@ void _rtw_up_sema(_sema	*sema)
 #ifdef PLATFORM_FREEBSD
 	sema_post(sema);
 #endif
+#ifdef PLATFORM_OS_XP
+
+	KeReleaseSemaphore(sema, IO_NETWORK_INCREMENT, 1,  FALSE);
+
+#endif
 
 #ifdef PLATFORM_OS_CE
 	ReleaseSemaphore(*sema,  1,  NULL);
@@ -1185,6 +1290,13 @@ u32 _rtw_down_sema(_sema *sema)
 	sema_wait(sema);
 	return  _SUCCESS;
 #endif
+#ifdef PLATFORM_OS_XP
+
+	if (STATUS_SUCCESS == KeWaitForSingleObject(sema, Executive, KernelMode, TRUE, NULL))
+		return  _SUCCESS;
+	else
+		return _FAIL;
+#endif
 
 #ifdef PLATFORM_OS_CE
 	if (WAIT_OBJECT_0 == WaitForSingleObject(*sema, INFINITE))
@@ -1194,18 +1306,11 @@ u32 _rtw_down_sema(_sema *sema)
 #endif
 }
 
-#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 17, 0)
 inline void thread_exit(_completion *comp)
-#else
-inline void kthread_thread_exit(_completion *comp)
-#endif
 {
 #ifdef PLATFORM_LINUX
-#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 17, 0)
-	complete_and_exit(comp, 0);
-#else
 	kthread_complete_and_exit(comp, 0);
-#endif
+	// complete_and_exit(comp, 0);
 #endif
 
 #ifdef PLATFORM_FREEBSD
@@ -1214,6 +1319,10 @@ inline void kthread_thread_exit(_completion *comp)
 
 #ifdef PLATFORM_OS_CE
 	ExitThread(STATUS_SUCCESS);
+#endif
+
+#ifdef PLATFORM_OS_XP
+	PsTerminateSystemThread(STATUS_SUCCESS);
 #endif
 }
 
@@ -1250,6 +1359,11 @@ void	_rtw_mutex_init(_mutex *pmutex)
 #ifdef PLATFORM_FREEBSD
 	mtx_init(pmutex, "", NULL, MTX_DEF | MTX_RECURSE);
 #endif
+#ifdef PLATFORM_OS_XP
+
+	KeInitializeMutex(pmutex, 0);
+
+#endif
 
 #ifdef PLATFORM_OS_CE
 	*pmutex =  CreateMutex(NULL, _FALSE, NULL);
@@ -1272,6 +1386,10 @@ void	_rtw_mutex_free(_mutex *pmutex)
 
 #endif
 
+#ifdef PLATFORM_OS_XP
+
+#endif
+
 #ifdef PLATFORM_OS_CE
 
 #endif
@@ -1288,6 +1406,11 @@ void	_rtw_spinlock_init(_lock *plock)
 #ifdef PLATFORM_FREEBSD
 	mtx_init(plock, "", NULL, MTX_DEF | MTX_RECURSE);
 #endif
+#ifdef PLATFORM_WINDOWS
+
+	NdisAllocateSpinLock(plock);
+
+#endif
 
 }
 
@@ -1295,6 +1418,12 @@ void	_rtw_spinlock_free(_lock *plock)
 {
 #ifdef PLATFORM_FREEBSD
 	mtx_destroy(plock);
+#endif
+
+#ifdef PLATFORM_WINDOWS
+
+	NdisFreeSpinLock(plock);
+
 #endif
 
 }
@@ -1330,6 +1459,11 @@ void	_rtw_spinlock(_lock	*plock)
 #ifdef PLATFORM_FREEBSD
 	mtx_lock(plock);
 #endif
+#ifdef PLATFORM_WINDOWS
+
+	NdisAcquireSpinLock(plock);
+
+#endif
 
 }
 
@@ -1343,6 +1477,11 @@ void	_rtw_spinunlock(_lock *plock)
 #endif
 #ifdef PLATFORM_FREEBSD
 	mtx_unlock(plock);
+#endif
+#ifdef PLATFORM_WINDOWS
+
+	NdisReleaseSpinLock(plock);
+
 #endif
 }
 
@@ -1358,6 +1497,11 @@ void	_rtw_spinlock_ex(_lock	*plock)
 #ifdef PLATFORM_FREEBSD
 	mtx_lock(plock);
 #endif
+#ifdef PLATFORM_WINDOWS
+
+	NdisDprAcquireSpinLock(plock);
+
+#endif
 
 }
 
@@ -1372,7 +1516,14 @@ void	_rtw_spinunlock_ex(_lock *plock)
 #ifdef PLATFORM_FREEBSD
 	mtx_unlock(plock);
 #endif
+#ifdef PLATFORM_WINDOWS
+
+	NdisDprReleaseSpinLock(plock);
+
+#endif
 }
+
+
 
 void _rtw_init_queue(_queue *pqueue)
 {
@@ -1411,6 +1562,11 @@ systime _rtw_get_current_time(void)
 	getmicrotime(&tvp);
 	return tvp.tv_sec;
 #endif
+#ifdef PLATFORM_WINDOWS
+	LARGE_INTEGER	SystemTime;
+	NdisGetCurrentSystemTime(&SystemTime);
+	return SystemTime.LowPart;/* count of 100-nanosecond intervals */
+#endif
 }
 
 inline u32 _rtw_systime_to_ms(systime stime)
@@ -1421,6 +1577,9 @@ inline u32 _rtw_systime_to_ms(systime stime)
 #ifdef PLATFORM_FREEBSD
 	return stime * 1000;
 #endif
+#ifdef PLATFORM_WINDOWS
+	return stime / 10000 ;
+#endif
 }
 
 inline systime _rtw_ms_to_systime(u32 ms)
@@ -1430,6 +1589,9 @@ inline systime _rtw_ms_to_systime(u32 ms)
 #endif
 #ifdef PLATFORM_FREEBSD
 	return ms / 1000;
+#endif
+#ifdef PLATFORM_WINDOWS
+	return ms * 10000 ;
 #endif
 }
 
@@ -1467,6 +1629,231 @@ inline bool _rtw_time_after(systime a, systime b)
 #endif
 }
 
+sysptime rtw_sptime_get(void)
+{
+	/* CLOCK_MONOTONIC */
+#ifdef PLATFORM_LINUX
+	#if (LINUX_VERSION_CODE >= KERNEL_VERSION(3, 17, 0))
+	struct timespec64 cur;
+
+	ktime_get_ts64(&cur);
+	return timespec64_to_ktime(cur);
+	#else
+	struct timespec cur;
+
+	ktime_get_ts(&cur);
+	return timespec_to_ktime(cur);
+	#endif
+#else
+	#error "TBD\n"
+#endif
+}
+
+sysptime rtw_sptime_set(s64 secs, const u32 nsecs)
+{
+#ifdef PLATFORM_LINUX
+	return ktime_set(secs, nsecs);
+#else
+	#error "TBD\n"
+#endif
+}
+
+sysptime rtw_sptime_zero(void)
+{
+#ifdef PLATFORM_LINUX
+	return ktime_set(0, 0);
+#else
+	#error "TBD\n"
+#endif
+}
+
+/*
+ *   cmp1  < cmp2: return <0
+ *   cmp1 == cmp2: return 0
+ *   cmp1  > cmp2: return >0
+ */
+int rtw_sptime_cmp(const sysptime cmp1, const sysptime cmp2)
+{
+#ifdef PLATFORM_LINUX
+	#if (LINUX_VERSION_CODE >= KERNEL_VERSION(3, 8, 0))
+	return ktime_compare(cmp1, cmp2);
+	#else
+	if (cmp1.tv64 < cmp2.tv64)
+		return -1;
+	if (cmp1.tv64 > cmp2.tv64)
+		return 1;
+	return 0;
+	#endif
+#else
+	#error "TBD\n"
+#endif
+}
+
+bool rtw_sptime_eql(const sysptime cmp1, const sysptime cmp2)
+{
+#ifdef PLATFORM_LINUX
+	return rtw_sptime_cmp(cmp1, cmp2) == 0;
+#else
+	#error "TBD\n"
+#endif
+}
+
+bool rtw_sptime_is_zero(const sysptime sptime)
+{
+#ifdef PLATFORM_LINUX
+	return rtw_sptime_cmp(sptime, rtw_sptime_zero()) == 0;
+#else
+	#error "TBD\n"
+#endif
+}
+
+/*
+ * sub = lhs - rhs, in normalized form
+ */
+sysptime rtw_sptime_sub(const sysptime lhs, const sysptime rhs)
+{
+#ifdef PLATFORM_LINUX
+	return ktime_sub(lhs, rhs);
+#else
+	#error "TBD\n"
+#endif
+}
+
+/*
+ * add = lhs + rhs, in normalized form
+ */
+sysptime rtw_sptime_add(const sysptime lhs, const sysptime rhs)
+{
+#ifdef PLATFORM_LINUX
+	return ktime_add(lhs, rhs);
+#else
+	#error "TBD\n"
+#endif
+}
+
+s64 rtw_sptime_to_ms(const sysptime sptime)
+{
+#ifdef PLATFORM_LINUX
+	#if (LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 35))
+	return ktime_to_ms(sptime);
+	#else
+	struct timeval tv = ktime_to_timeval(sptime);
+
+	return (s64) tv.tv_sec * MSEC_PER_SEC + tv.tv_usec / USEC_PER_MSEC;
+	#endif
+#else
+	#error "TBD\n"
+#endif
+}
+
+sysptime rtw_ms_to_sptime(u64 ms)
+{
+#ifdef PLATFORM_LINUX
+	return ns_to_ktime(ms * NSEC_PER_MSEC);
+#else
+	#error "TBD\n"
+#endif
+}
+
+s64 rtw_sptime_to_us(const sysptime sptime)
+{
+#ifdef PLATFORM_LINUX
+	#if (LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 22))
+	return ktime_to_us(sptime);
+	#else
+	struct timeval tv = ktime_to_timeval(sptime);
+
+	return (s64) tv.tv_sec * USEC_PER_SEC + tv.tv_usec;
+	#endif
+#else
+	#error "TBD\n"
+#endif
+}
+
+sysptime rtw_us_to_sptime(u64 us)
+{
+#ifdef PLATFORM_LINUX
+	return ns_to_ktime(us * NSEC_PER_USEC);
+#else
+	#error "TBD\n"
+#endif
+}
+
+s64 rtw_sptime_to_ns(const sysptime sptime)
+{
+#ifdef PLATFORM_LINUX
+	return ktime_to_ns(sptime);
+#else
+	#error "TBD\n"
+#endif
+}
+
+sysptime rtw_ns_to_sptime(u64 ns)
+{
+#ifdef PLATFORM_LINUX
+	return ns_to_ktime(ns);
+#else
+	#error "TBD\n"
+#endif
+}
+
+s64 rtw_sptime_diff_ms(const sysptime start, const sysptime end)
+{
+	sysptime diff;
+
+	diff = rtw_sptime_sub(end, start);
+
+	return rtw_sptime_to_ms(diff);
+}
+
+s64 rtw_sptime_pass_ms(const sysptime start)
+{
+	sysptime cur, diff;
+
+	cur = rtw_sptime_get();
+	diff = rtw_sptime_sub(cur, start);
+
+	return rtw_sptime_to_ms(diff);
+}
+
+s64 rtw_sptime_diff_us(const sysptime start, const sysptime end)
+{
+	sysptime diff;
+
+	diff = rtw_sptime_sub(end, start);
+
+	return rtw_sptime_to_us(diff);
+}
+
+s64 rtw_sptime_pass_us(const sysptime start)
+{
+	sysptime cur, diff;
+
+	cur = rtw_sptime_get();
+	diff = rtw_sptime_sub(cur, start);
+
+	return rtw_sptime_to_us(diff);
+}
+
+s64 rtw_sptime_diff_ns(const sysptime start, const sysptime end)
+{
+	sysptime diff;
+
+	diff = rtw_sptime_sub(end, start);
+
+	return rtw_sptime_to_ns(diff);
+}
+
+s64 rtw_sptime_pass_ns(const sysptime start)
+{
+	sysptime cur, diff;
+
+	cur = rtw_sptime_get();
+	diff = rtw_sptime_sub(cur, start);
+
+	return rtw_sptime_to_ns(diff);
+}
+
 void rtw_sleep_schedulable(int ms)
 {
 
@@ -1479,8 +1866,7 @@ void rtw_sleep_schedulable(int ms)
 		delta = 1;/* 1 ms */
 	}
 	set_current_state(TASK_INTERRUPTIBLE);
-	if (schedule_timeout(delta) != 0)
-		return ;
+        schedule_timeout(delta);
 	return;
 
 #endif
@@ -1489,7 +1875,14 @@ void rtw_sleep_schedulable(int ms)
 	return ;
 #endif
 
+#ifdef PLATFORM_WINDOWS
+
+	NdisMSleep(ms * 1000); /* (us)*1000=(ms) */
+
+#endif
+
 }
+
 
 void rtw_msleep_os(int ms)
 {
@@ -1509,6 +1902,13 @@ void rtw_msleep_os(int ms)
 	DELAY(ms * 1000);
 	return ;
 #endif
+#ifdef PLATFORM_WINDOWS
+
+	NdisMSleep(ms * 1000); /* (us)*1000=(ms) */
+
+#endif
+
+
 }
 void rtw_usleep_os(int us)
 {
@@ -1531,7 +1931,15 @@ void rtw_usleep_os(int us)
 
 	return ;
 #endif
+#ifdef PLATFORM_WINDOWS
+
+	NdisMSleep(us); /* (us) */
+
+#endif
+
+
 }
+
 
 #ifdef DBG_DELAY_OS
 void _rtw_mdelay_os(int ms, const char *func, const int line)
@@ -1549,6 +1957,10 @@ void _rtw_mdelay_os(int ms, const char *func, const int line)
 #if defined(PLATFORM_LINUX)
 
 	mdelay((unsigned long)ms);
+
+#elif defined(PLATFORM_WINDOWS)
+
+	NdisStallExecution(ms * 1000); /* (us)*1000=(ms) */
 
 #endif
 
@@ -1573,6 +1985,10 @@ void _rtw_udelay_os(int us, const char *func, const int line)
 
 	udelay((unsigned long)us);
 
+#elif defined(PLATFORM_WINDOWS)
+
+	NdisStallExecution(us); /* (us) */
+
 #endif
 
 }
@@ -1589,6 +2005,13 @@ void rtw_mdelay_os(int ms)
 	DELAY(ms * 1000);
 	return ;
 #endif
+#ifdef PLATFORM_WINDOWS
+
+	NdisStallExecution(ms * 1000); /* (us)*1000=(ms) */
+
+#endif
+
+
 }
 void rtw_udelay_os(int us)
 {
@@ -1603,6 +2026,11 @@ void rtw_udelay_os(int us)
 	DELAY(us);
 	return ;
 #endif
+#ifdef PLATFORM_WINDOWS
+
+	NdisStallExecution(us); /* (us) */
+
+#endif
 
 }
 #endif
@@ -1615,6 +2043,49 @@ void rtw_yield_os(void)
 #ifdef PLATFORM_FREEBSD
 	yield();
 #endif
+#ifdef PLATFORM_WINDOWS
+	SwitchToThread();
+#endif
+}
+
+const char *_rtw_pwait_type_str[] = {
+	[RTW_PWAIT_TYPE_MSLEEP] = "MS",
+	[RTW_PWAIT_TYPE_USLEEP] = "US",
+	[RTW_PWAIT_TYPE_YIELD] = "Y",
+	[RTW_PWAIT_TYPE_MDELAY] = "MD",
+	[RTW_PWAIT_TYPE_UDELAY] = "UD",
+	[RTW_PWAIT_TYPE_NUM] = "unknown",
+};
+
+static void rtw_pwctx_yield(int us)
+{
+	rtw_yield_os();
+}
+
+static void (*const rtw_pwait_hdl[])(int)= {
+	[RTW_PWAIT_TYPE_MSLEEP] = rtw_msleep_os,
+	[RTW_PWAIT_TYPE_USLEEP] = rtw_usleep_os,
+	[RTW_PWAIT_TYPE_YIELD] = rtw_pwctx_yield,
+	[RTW_PWAIT_TYPE_MDELAY] = rtw_mdelay_os,
+	[RTW_PWAIT_TYPE_UDELAY] = rtw_udelay_os,
+};
+
+int rtw_pwctx_config(struct rtw_pwait_ctx *pwctx, enum rtw_pwait_type type, s32 time, s32 cnt_lmt)
+{
+	int ret = _FAIL;
+
+	if (!RTW_PWAIT_TYPE_VALID(type))
+		goto exit;
+
+	pwctx->conf.type = type;
+	pwctx->conf.wait_time = time;
+	pwctx->conf.wait_cnt_lmt = cnt_lmt;
+	pwctx->wait_hdl = rtw_pwait_hdl[type];
+
+	ret = _SUCCESS;
+
+exit:
+	return ret;
 }
 
 bool rtw_macaddr_is_larger(const u8 *a, const u8 *b)
@@ -1779,6 +2250,8 @@ inline void ATOMIC_SET(ATOMIC_T *v, int i)
 {
 #ifdef PLATFORM_LINUX
 	atomic_set(v, i);
+#elif defined(PLATFORM_WINDOWS)
+	*v = i; /* other choice???? */
 #elif defined(PLATFORM_FREEBSD)
 	atomic_set_int(v, i);
 #endif
@@ -1788,6 +2261,8 @@ inline int ATOMIC_READ(ATOMIC_T *v)
 {
 #ifdef PLATFORM_LINUX
 	return atomic_read(v);
+#elif defined(PLATFORM_WINDOWS)
+	return *v; /* other choice???? */
 #elif defined(PLATFORM_FREEBSD)
 	return atomic_load_acq_32(v);
 #endif
@@ -1797,6 +2272,8 @@ inline void ATOMIC_ADD(ATOMIC_T *v, int i)
 {
 #ifdef PLATFORM_LINUX
 	atomic_add(i, v);
+#elif defined(PLATFORM_WINDOWS)
+	InterlockedAdd(v, i);
 #elif defined(PLATFORM_FREEBSD)
 	atomic_add_int(v, i);
 #endif
@@ -1805,6 +2282,8 @@ inline void ATOMIC_SUB(ATOMIC_T *v, int i)
 {
 #ifdef PLATFORM_LINUX
 	atomic_sub(i, v);
+#elif defined(PLATFORM_WINDOWS)
+	InterlockedAdd(v, -i);
 #elif defined(PLATFORM_FREEBSD)
 	atomic_subtract_int(v, i);
 #endif
@@ -1814,6 +2293,8 @@ inline void ATOMIC_INC(ATOMIC_T *v)
 {
 #ifdef PLATFORM_LINUX
 	atomic_inc(v);
+#elif defined(PLATFORM_WINDOWS)
+	InterlockedIncrement(v);
 #elif defined(PLATFORM_FREEBSD)
 	atomic_add_int(v, 1);
 #endif
@@ -1823,6 +2304,8 @@ inline void ATOMIC_DEC(ATOMIC_T *v)
 {
 #ifdef PLATFORM_LINUX
 	atomic_dec(v);
+#elif defined(PLATFORM_WINDOWS)
+	InterlockedDecrement(v);
 #elif defined(PLATFORM_FREEBSD)
 	atomic_subtract_int(v, 1);
 #endif
@@ -1832,6 +2315,8 @@ inline int ATOMIC_ADD_RETURN(ATOMIC_T *v, int i)
 {
 #ifdef PLATFORM_LINUX
 	return atomic_add_return(i, v);
+#elif defined(PLATFORM_WINDOWS)
+	return InterlockedAdd(v, i);
 #elif defined(PLATFORM_FREEBSD)
 	atomic_add_int(v, i);
 	return atomic_load_acq_32(v);
@@ -1842,6 +2327,8 @@ inline int ATOMIC_SUB_RETURN(ATOMIC_T *v, int i)
 {
 #ifdef PLATFORM_LINUX
 	return atomic_sub_return(i, v);
+#elif defined(PLATFORM_WINDOWS)
+	return InterlockedAdd(v, -i);
 #elif defined(PLATFORM_FREEBSD)
 	atomic_subtract_int(v, i);
 	return atomic_load_acq_32(v);
@@ -1852,6 +2339,8 @@ inline int ATOMIC_INC_RETURN(ATOMIC_T *v)
 {
 #ifdef PLATFORM_LINUX
 	return atomic_inc_return(v);
+#elif defined(PLATFORM_WINDOWS)
+	return InterlockedIncrement(v);
 #elif defined(PLATFORM_FREEBSD)
 	atomic_add_int(v, 1);
 	return atomic_load_acq_32(v);
@@ -1862,6 +2351,8 @@ inline int ATOMIC_DEC_RETURN(ATOMIC_T *v)
 {
 #ifdef PLATFORM_LINUX
 	return atomic_dec_return(v);
+#elif defined(PLATFORM_WINDOWS)
+	return InterlockedDecrement(v);
 #elif defined(PLATFORM_FREEBSD)
 	atomic_subtract_int(v, 1);
 	return atomic_load_acq_32(v);
@@ -1983,6 +2474,20 @@ static int writeFile(struct file *fp, char *buf, int len)
 }
 
 /*
+* Test if the specifi @param pathname is a direct and readable
+* If readable, @param sz is not used
+* @param pathname the name of the path to test
+* @return Linux specific error code
+*/
+static int isDirReadable(const char *pathname, u32 *sz)
+{
+	struct path path;
+	int error = 0;
+
+	return kern_path(pathname, LOOKUP_FOLLOW, &path);
+}
+
+/*
 * Test if the specifi @param path is a file and readable
 * If readable, @param sz is got
 * @param path the path of the file to test
@@ -1992,19 +2497,23 @@ static int isFileReadable(const char *path, u32 *sz)
 {
 	struct file *fp;
 	int ret = 0;
-#ifdef set_fs
+	#if (LINUX_VERSION_CODE < KERNEL_VERSION(5, 10, 0))
 	mm_segment_t oldfs;
-#endif
+	#endif
 	char buf;
 
 	fp = filp_open(path, O_RDONLY, 0);
 	if (IS_ERR(fp))
 		ret = PTR_ERR(fp);
 	else {
-#ifdef set_fs
+		#if (LINUX_VERSION_CODE < KERNEL_VERSION(5, 10, 0))
 		oldfs = get_fs();
+		#if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 1, 0))
 		set_fs(KERNEL_DS);
-#endif
+		#else
+		set_fs(get_ds());
+		#endif
+		#endif
 
 		if (1 != readFile(fp, &buf, 1))
 			ret = PTR_ERR(fp);
@@ -2016,9 +2525,10 @@ static int isFileReadable(const char *path, u32 *sz)
 			*sz = i_size_read(fp->f_dentry->d_inode);
 			#endif
 		}
-#ifdef set_fs
+
+		#if (LINUX_VERSION_CODE < KERNEL_VERSION(5, 10, 0))
 		set_fs(oldfs);
-#endif
+		#endif
 		filp_close(fp, NULL);
 	}
 	return ret;
@@ -2034,23 +2544,30 @@ static int isFileReadable(const char *path, u32 *sz)
 static int retriveFromFile(const char *path, u8 *buf, u32 sz)
 {
 	int ret = -1;
-#ifdef set_fs
+	#if (LINUX_VERSION_CODE < KERNEL_VERSION(5, 10, 0))
 	mm_segment_t oldfs;
-#endif
+	#endif
 	struct file *fp;
 
 	if (path && buf) {
 		ret = openFile(&fp, path, O_RDONLY, 0);
 		if (0 == ret) {
 			RTW_INFO("%s openFile path:%s fp=%p\n", __FUNCTION__, path , fp);
-#ifdef set_fs
+
+			#if (LINUX_VERSION_CODE < KERNEL_VERSION(5, 10, 0))
 			oldfs = get_fs();
+			#if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 1, 0))
 			set_fs(KERNEL_DS);
+			#else
+			set_fs(get_ds());
+			#endif
+			#endif
+
 			ret = readFile(fp, buf, sz);
+
+			#if (LINUX_VERSION_CODE < KERNEL_VERSION(5, 10, 0))
 			set_fs(oldfs);
-#else
-			ret = readFile(fp, buf, sz);
-#endif
+			#endif
 			closeFile(fp);
 
 			RTW_INFO("%s readFile, ret:%d\n", __FUNCTION__, ret);
@@ -2074,23 +2591,30 @@ static int retriveFromFile(const char *path, u8 *buf, u32 sz)
 static int storeToFile(const char *path, u8 *buf, u32 sz)
 {
 	int ret = 0;
-#ifdef set_fs
+	#if (LINUX_VERSION_CODE < KERNEL_VERSION(5, 10, 0))
 	mm_segment_t oldfs;
-#endif
+	#endif
 	struct file *fp;
 
 	if (path && buf) {
 		ret = openFile(&fp, path, O_CREAT | O_WRONLY, 0666);
 		if (0 == ret) {
 			RTW_INFO("%s openFile path:%s fp=%p\n", __FUNCTION__, path , fp);
-#ifdef set_fs
+
+			#if (LINUX_VERSION_CODE < KERNEL_VERSION(5, 10, 0))
 			oldfs = get_fs();
+			#if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 1, 0))
 			set_fs(KERNEL_DS);
+			#else
+			set_fs(get_ds());
+			#endif
+			#endif
+
 			ret = writeFile(fp, buf, sz);
+
+			#if (LINUX_VERSION_CODE < KERNEL_VERSION(5, 10, 0))
 			set_fs(oldfs);
-#else
-			ret = writeFile(fp, buf, sz);
-#endif
+			#endif
 			closeFile(fp);
 
 			RTW_INFO("%s writeFile, ret:%d\n", __FUNCTION__, ret);
@@ -2104,6 +2628,24 @@ static int storeToFile(const char *path, u8 *buf, u32 sz)
 	return ret;
 }
 #endif /* PLATFORM_LINUX */
+
+/*
+* Test if the specifi @param path is a direct and readable
+* @param path the path of the direct to test
+* @return _TRUE or _FALSE
+*/
+int rtw_is_dir_readable(const char *path)
+{
+#ifdef PLATFORM_LINUX
+	if (isDirReadable(path, NULL) == 0)
+		return _TRUE;
+	else
+		return _FALSE;
+#else
+	/* Todo... */
+	return _FALSE;
+#endif
+}
 
 /*
 * Test if the specifi @param path is a file and readable
@@ -2140,6 +2682,25 @@ int rtw_is_file_readable_with_size(const char *path, u32 *sz)
 	/* Todo... */
 	return _FALSE;
 #endif
+}
+
+/*
+* Test if the specifi @param path is a readable file with valid size.
+* If readable, @param sz is got
+* @param path the path of the file to test
+* @return _TRUE or _FALSE
+*/
+int rtw_readable_file_sz_chk(const char *path, u32 sz)
+{
+	u32 fsz;
+
+	if (rtw_is_file_readable_with_size(path, &fsz) == _FALSE)
+		return _FALSE;
+
+	if (fsz > sz)
+		return _FALSE;
+	
+	return _TRUE;
 }
 
 /*
@@ -2192,13 +2753,6 @@ struct net_device *rtw_alloc_etherdev_with_old_priv(int sizeof_priv, void *old_p
 	if (!pnetdev)
 		goto RETURN;
 
-
-	pnetdev->mtu = WLAN_MAX_ETHFRM_LEN;
-#if (LINUX_VERSION_CODE >= KERNEL_VERSION(4, 10, 0))
-	pnetdev->min_mtu = WLAN_MIN_ETHFRM_LEN;
-	pnetdev->max_mtu = WLAN_DATA_MAXLEN;
-#endif
-
 	pnpi = netdev_priv(pnetdev);
 	pnpi->priv = old_priv;
 	pnpi->sizeof_priv = sizeof_priv;
@@ -2219,12 +2773,6 @@ struct net_device *rtw_alloc_etherdev(int sizeof_priv)
 #endif
 	if (!pnetdev)
 		goto RETURN;
-
-	pnetdev->mtu = WLAN_MAX_ETHFRM_LEN;
-#if (LINUX_VERSION_CODE >= KERNEL_VERSION(4, 10, 0))
-	pnetdev->min_mtu = WLAN_MIN_ETHFRM_LEN;
-	pnetdev->max_mtu = WLAN_DATA_MAXLEN;
-#endif
 
 	pnpi = netdev_priv(pnetdev);
 
@@ -2258,65 +2806,6 @@ RETURN:
 	return;
 }
 
-int rtw_change_ifname(_adapter *padapter, const char *ifname)
-{
-	struct dvobj_priv *dvobj;
-	struct net_device *pnetdev;
-	struct net_device *cur_pnetdev;
-	struct rereg_nd_name_data *rereg_priv;
-	int ret;
-	u8 rtnl_lock_needed;
-
-	if (!padapter)
-		goto error;
-
-	dvobj = adapter_to_dvobj(padapter);
-	cur_pnetdev = padapter->pnetdev;
-	rereg_priv = &padapter->rereg_nd_name_priv;
-
-	/* free the old_pnetdev */
-	if (rereg_priv->old_pnetdev) {
-		free_netdev(rereg_priv->old_pnetdev);
-		rereg_priv->old_pnetdev = NULL;
-	}
-
-	rtnl_lock_needed = rtw_rtnl_lock_needed(dvobj);
-
-	if (rtnl_lock_needed)
-		unregister_netdev(cur_pnetdev);
-	else
-		unregister_netdevice(cur_pnetdev);
-
-	rereg_priv->old_pnetdev = cur_pnetdev;
-
-	pnetdev = rtw_init_netdev(padapter);
-	if (!pnetdev)  {
-		ret = -1;
-		goto error;
-	}
-
-	SET_NETDEV_DEV(pnetdev, dvobj_to_dev(adapter_to_dvobj(padapter)));
-
-	rtw_init_netdev_name(pnetdev, ifname);
-
-	eth_hw_addr_set(pnetdev, adapter_mac_addr(padapter));
-
-	if (rtnl_lock_needed)
-		ret = register_netdev(pnetdev);
-	else
-		ret = register_netdevice(pnetdev);
-
-	if (ret != 0) {
-		goto error;
-	}
-
-	return 0;
-
-error:
-
-	return -1;
-
-}
 #endif
 
 #ifdef PLATFORM_FREEBSD
@@ -2400,6 +2889,8 @@ u64 rtw_modular64(u64 x, u64 y)
 {
 #ifdef PLATFORM_LINUX
 	return do_div(x, y);
+#elif defined(PLATFORM_WINDOWS)
+	return x % y;
 #elif defined(PLATFORM_FREEBSD)
 	return x % y;
 #endif
@@ -2410,6 +2901,8 @@ u64 rtw_division64(u64 x, u64 y)
 #ifdef PLATFORM_LINUX
 	do_div(x, y);
 	return x;
+#elif defined(PLATFORM_WINDOWS)
+	return x / y;
 #elif defined(PLATFORM_FREEBSD)
 	return x / y;
 #endif
@@ -2429,6 +2922,8 @@ inline u32 rtw_random32(void)
 #else
 	return random32();
 #endif
+#elif defined(PLATFORM_WINDOWS)
+#error "to be implemented\n"
 #elif defined(PLATFORM_FREEBSD)
 #error "to be implemented\n"
 #endif
@@ -2667,6 +3162,7 @@ exit:
 	return val;
 }
 
+#ifdef CONFIG_RTW_MESH
 int rtw_blacklist_add(_queue *blist, const u8 *addr, u32 timeout_ms)
 {
 	struct blacklist_ent *ent;
@@ -2708,7 +3204,6 @@ int rtw_blacklist_add(_queue *blist, const u8 *addr, u32 timeout_ms)
 
 	exit_critical_bh(&blist->lock);
 
-exit:
 	return (exist == _TRUE && timeout == _FALSE) ? RTW_ALREADY : (ent ? _SUCCESS : _FAIL);
 }
 
@@ -2740,7 +3235,6 @@ int rtw_blacklist_del(_queue *blist, const u8 *addr)
 
 	exit_critical_bh(&blist->lock);
 
-exit:
 	return exist == _TRUE ? _SUCCESS : RTW_ALREADY;
 }
 
@@ -2774,7 +3268,6 @@ int rtw_blacklist_search(_queue *blist, const u8 *addr)
 
 	exit_critical_bh(&blist->lock);
 
-exit:
 	return exist;
 }
 
@@ -2827,6 +3320,7 @@ void dump_blacklist(void *sel, _queue *blist, const char *title)
 	}
 	exit_critical_bh(&blist->lock);
 }
+#endif
 
 /**
 * is_null -
@@ -2954,6 +3448,33 @@ int hexstr2bin(const char *hex, u8 *buf, size_t len)
 		*opos++ = a;
 		ipos += 2;
 	}
+	return 0;
+}
+
+/**
+ * hwaddr_aton - Convert ASCII string to MAC address
+ * @txt: MAC address as a string (e.g., "00:11:22:33:44:55")
+ * @addr: Buffer for the MAC address (ETH_ALEN = 6 bytes)
+ * Returns: 0 on success, -1 on failure (e.g., string not a MAC address)
+ */
+int hwaddr_aton_i(const char *txt, u8 *addr)
+{
+	int i;
+
+	for (i = 0; i < 6; i++) {
+		int a, b;
+
+		a = hex2num_i(*txt++);
+		if (a < 0)
+			return -1;
+		b = hex2num_i(*txt++);
+		if (b < 0)
+			return -1;
+		*addr++ = (a << 4) | b;
+		if (i < 5 && *txt++ != ':')
+			return -1;
+	}
+
 	return 0;
 }
 
